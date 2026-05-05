@@ -285,10 +285,9 @@
         <div class="meta" style="margin-top: 12px;">Hold your phone flat. Point it where you want.</div>
       </div>
       <div class="card stack" style="align-items: center; gap: var(--gap);">
-        <div class="label">Your heading</div>
-        <div class="display" id="chris-heading">—</div>
+        <div class="label">Compass</div>
+        <div class="display" id="chris-heading" style="font-size: 56px;">…</div>
         <div class="meta" id="chris-dir">Waiting for compass…</div>
-        <div class="chris-arrow" id="chris-arrow" style="display: none;"></div>
         <button class="btn btn-secondary hidden" id="btn-enable-compass" style="margin-top: 8px;">Enable compass</button>
         <div class="error-msg hidden" id="compass-error"></div>
       </div>
@@ -459,6 +458,10 @@ function angularDiff(a, b) {
 }
 
 // --- COMPASS API (Chris's screen) ---
+// We only trust absolute compass readings. iOS exposes webkitCompassHeading
+// on regular deviceorientation events; Android Chrome fires
+// deviceorientationabsolute. Plain deviceorientation alpha is RELATIVE to
+// wherever the phone was when the page loaded — never use it directly.
 async function startCompass() {
   if (typeof DeviceOrientationEvent !== 'undefined' &&
       typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -474,26 +477,30 @@ async function startCompass() {
     }
   }
   let gotEvent = false;
-  const handler = (e) => {
-    let h = null;
+  function applyHeading(h) {
+    if (h == null || isNaN(h)) return;
+    h = ((h % 360) + 360) % 360;
+    gotEvent = true;
+    myHeading = h;
+    updateChrisCompassUI();
+  }
+  function onAbsolute(e) {
+    if (typeof e.alpha === 'number') applyHeading(360 - e.alpha);
+  }
+  function onOrientation(e) {
     if (typeof e.webkitCompassHeading === 'number') {
-      h = e.webkitCompassHeading;
-    } else if (typeof e.alpha === 'number') {
-      h = 360 - e.alpha;
+      applyHeading(e.webkitCompassHeading);
+    } else if (e.absolute === true && typeof e.alpha === 'number') {
+      applyHeading(360 - e.alpha);
     }
-    if (h != null) {
-      gotEvent = true;
-      myHeading = h;
-      updateChrisCompassUI();
-    }
-  };
-  window.addEventListener('deviceorientationabsolute', handler, true);
-  window.addEventListener('deviceorientation', handler, true);
+  }
+  window.addEventListener('deviceorientationabsolute', onAbsolute, true);
+  window.addEventListener('deviceorientation', onOrientation, true);
   setTimeout(() => {
     if (!gotEvent) {
-      showCompassError('No compass data. Check Motion & Orientation Access in Safari settings.');
+      showCompassError('No absolute compass data. On Android, calibrate by tracing a figure-8 in the air. On iOS, allow Motion & Orientation in Safari settings.');
     }
-  }, 2500);
+  }, 3500);
   return true;
 }
 function showCompassError(msg) {
@@ -503,12 +510,9 @@ function showCompassError(msg) {
 }
 function updateChrisCompassUI() {
   if (myHeading == null) return;
-  const h = Math.round(((myHeading % 360) + 360) % 360);
-  $('chris-heading').textContent = h + '°';
-  $('chris-dir').textContent = dirFullName(headingToDir(h));
-  const arrow = $('chris-arrow');
-  arrow.style.display = 'block';
-  arrow.style.transform = `rotate(${h}deg)`;
+  // Don't reveal the heading — Chris shouldn't see his own answer until reveal.
+  $('chris-heading').textContent = '✓';
+  $('chris-dir').textContent = 'Locked in. Tap below when everyone has guessed.';
   $('btn-everyone-in').disabled = false;
   $('compass-error').classList.add('hidden');
   $('btn-enable-compass').classList.add('hidden');
@@ -705,9 +709,8 @@ $('btn-iam-chris').addEventListener('click', async () => {
   show('chris');
   $('btn-everyone-in').disabled = true;
   myHeading = null;
-  $('chris-heading').textContent = '—';
+  $('chris-heading').textContent = '…';
   $('chris-dir').textContent = 'Waiting for compass…';
-  $('chris-arrow').style.display = 'none';
   $('compass-error').classList.add('hidden');
   $('btn-enable-compass').classList.add('hidden');
   startHeartbeat();
@@ -729,7 +732,8 @@ $('btn-steal').addEventListener('click', async () => {
   show('chris');
   $('btn-everyone-in').disabled = true;
   myHeading = null;
-  $('chris-heading').textContent = '—';
+  $('chris-heading').textContent = '…';
+  $('chris-dir').textContent = 'Waiting for compass…';
   startHeartbeat();
   await startCompass();
 });
