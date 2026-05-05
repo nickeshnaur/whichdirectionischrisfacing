@@ -559,7 +559,7 @@ function handleStateUpdate(s) {
 
   if (currentScreen === 'home') {
     if (s.chris && s.chris.id !== myId) {
-      $('chris-status').textContent = 'Someone is being Chris…';
+      $('chris-status').textContent = 'Someone is Chris';
       $('btn-iam-chris').disabled = true;
     } else {
       $('chris-status').textContent = '';
