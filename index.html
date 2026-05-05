@@ -1,12 +1,12 @@
 <!--
   WHERE'S CHRIS POINTING — party compass game (brutal edition)
 
-  STORAGE LAYER (search "STORAGE" to find): currently uses window.storage
-  (artifact-only). To deploy on a real host, replace the four functions in
-  the STORAGE block with Firebase Realtime Database, Supabase, or any
-  key-value store. Game state lives under one shared key: "game".
+  Backed by Firebase Realtime Database. Config below — paste yours from
+  console.firebase.google.com → Project settings → Your apps → Web → Config.
+  Realtime listener replaces polling; per-path writes prevent submission
+  races between multiple guessers.
 
-  GAME STATE SHAPE:
+  GAME STATE SHAPE (under the key "game"):
   {
     chris: { id, claimedAt, lastBeat } | null,
     actualHeading: number | null,
@@ -347,23 +347,42 @@
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-database-compat.js"></script>
+
 <script>
 //==============================================================
-// STORAGE LAYER — swap this block for Firebase/Supabase later
+// FIREBASE CONFIG — paste from console.firebase.google.com
+// (Project settings → Your apps → Web app → SDK setup → Config)
 //==============================================================
-const STATE_KEY = 'game';
+const firebaseConfig = {
+  apiKey: "PASTE_API_KEY_HERE",
+  authDomain: "PASTE_AUTH_DOMAIN_HERE",
+  databaseURL: "PASTE_DATABASE_URL_HERE",
+  projectId: "PASTE_PROJECT_ID_HERE",
+  storageBucket: "PASTE_STORAGE_BUCKET_HERE",
+  messagingSenderId: "PASTE_MESSAGING_SENDER_ID_HERE",
+  appId: "PASTE_APP_ID_HERE"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const stateRef = db.ref('game');
+
 const HEARTBEAT_MS = 5000;
 const STALE_MS = 20000;
-const POLL_MS = 1500;
 
 async function loadState() {
   try {
-    const r = await window.storage.get(STATE_KEY, true);
-    return r ? JSON.parse(r.value) : null;
-  } catch { return null; }
+    const snap = await stateRef.get();
+    return snap.val();
+  } catch (e) {
+    console.error('load failed', e);
+    return null;
+  }
 }
 async function saveState(s) {
-  try { await window.storage.set(STATE_KEY, JSON.stringify(s), true); }
+  try { await stateRef.set(s); }
   catch (e) { console.error('save failed', e); }
 }
 function emptyState() {
@@ -384,7 +403,6 @@ let currentScreen = 'home';
 let myHeading = null;
 let lastSeenRound = -1;
 let heartbeatTimer = null;
-let pollTimer = null;
 let pickedHeading = null;
 let isDragging = false;
 
@@ -475,30 +493,35 @@ function updateChrisCompassUI() {
 }
 
 // --- HEARTBEAT ---
+// Per-path writes so we never clobber concurrent submissions.
 function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(async () => {
-    const s = await loadState() || emptyState();
-    if (s.chris && s.chris.id === myId) {
-      s.chris.lastBeat = Date.now();
-      if (myHeading != null) s.actualHeading = myHeading;
-      await saveState(s);
-    }
+    if (!latestState || !latestState.chris || latestState.chris.id !== myId) return;
+    try {
+      const updates = { 'chris/lastBeat': Date.now() };
+      if (myHeading != null) updates['actualHeading'] = myHeading;
+      await stateRef.update(updates);
+    } catch (e) { console.error('heartbeat failed', e); }
   }, HEARTBEAT_MS);
 }
 function stopHeartbeat() {
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
-// --- POLLING ---
-function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(syncFromServer, POLL_MS);
-  syncFromServer();
+// --- REALTIME SYNC (replaces polling) ---
+let latestState = null;
+let syncSubscribed = false;
+function startRealtimeSync() {
+  if (syncSubscribed) return;
+  stateRef.on('value', (snap) => {
+    const s = snap.val() || emptyState();
+    latestState = s;
+    handleStateUpdate(s);
+  });
+  syncSubscribed = true;
 }
-async function syncFromServer() {
-  const s = await loadState() || emptyState();
-
+function handleStateUpdate(s) {
   // Stale-Chris detection
   if (s.chris && Date.now() - (s.chris.lastBeat || 0) > STALE_MS && s.chris.id !== myId) {
     if (currentScreen === 'home') $('btn-steal').classList.remove('hidden');
@@ -694,20 +717,15 @@ $('btn-enable-compass').addEventListener('click', () => startCompass());
 
 $('btn-everyone-in').addEventListener('click', async () => {
   if (myHeading == null) return;
-  const s = await loadState() || emptyState();
-  if (!s.chris || s.chris.id !== myId) return;
-  s.actualHeading = myHeading;
-  s.revealed = true;
-  await saveState(s);
+  if (!latestState || !latestState.chris || latestState.chris.id !== myId) return;
+  await stateRef.update({ actualHeading: myHeading, revealed: true });
   stopHeartbeat();
-  showResults(s);
+  showResults({ ...latestState, actualHeading: myHeading, revealed: true });
 });
 
 $('btn-unclaim').addEventListener('click', async () => {
-  const s = await loadState() || emptyState();
-  if (s.chris && s.chris.id === myId) {
-    s.chris = null;
-    await saveState(s);
+  if (latestState && latestState.chris && latestState.chris.id === myId) {
+    await stateRef.child('chris').set(null);
   }
   stopHeartbeat();
   show('home');
@@ -731,10 +749,9 @@ $('btn-name-back').addEventListener('click', () => show('home'));
 // --- GUESS ---
 $('btn-submit-guess').addEventListener('click', async () => {
   if (pickedHeading == null) return;
-  const s = await loadState() || emptyState();
-  s.submissions = s.submissions || {};
-  s.submissions[myId] = { id: myId, name: myName, heading: pickedHeading, submittedAt: Date.now() };
-  await saveState(s);
+  await stateRef.child('submissions').child(myId).set({
+    id: myId, name: myName, heading: pickedHeading, submittedAt: Date.now()
+  });
   $('my-guess-display').textContent = pickedHeading + '°';
   show('waiting');
 });
@@ -748,7 +765,7 @@ $('btn-play-again').addEventListener('click', async () => {
 });
 
 // --- BOOT ---
-startPolling();
+startRealtimeSync();
 
 window.addEventListener('beforeunload', () => {
   stopHeartbeat();
