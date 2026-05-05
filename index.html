@@ -1,5 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Which Direction Is Chris Facing?</title>
+<meta name="description" content="Party compass game. Chris points his phone, everyone else guesses where. Closest wins.">
+<meta name="theme-color" content="#fde047">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Direction Chris">
+<meta property="og:title" content="Which Direction Is Chris Facing?">
+<meta property="og:description" content="Party compass game. Chris points his phone, everyone else guesses where. Closest wins.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://whichdirectionischrisfacing.com">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%23fde047%22/><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
+
 <!--
-  WHERE'S CHRIS POINTING — party compass game (brutal edition)
+  WHICH DIRECTION IS CHRIS FACING — party compass game (brutal edition)
 
   Backed by Firebase Realtime Database. Config below — paste yours from
   console.firebase.google.com → Project settings → Your apps → Web → Config.
@@ -58,7 +76,11 @@
   }
   .app {
     min-height: 100vh; min-height: 100dvh;
-    padding: 32px 20px 40px;
+    padding:
+      max(32px, env(safe-area-inset-top))
+      max(20px, env(safe-area-inset-right))
+      max(40px, env(safe-area-inset-bottom))
+      max(20px, env(safe-area-inset-left));
     display: flex; flex-direction: column;
   }
   .screen {
@@ -243,7 +265,7 @@
   <div class="screen" id="screen-home">
     <div class="stack" style="gap: var(--gap-lg);">
       <div>
-        <div class="title">Where's Chris pointing?</div>
+        <div class="title">Which direction is Chris facing?</div>
         <div class="meta" style="margin-top: 12px;">Guess the compass direction. Closest wins.</div>
       </div>
       <div class="stack">
@@ -292,7 +314,7 @@
   <div class="screen hidden" id="screen-guess">
     <div class="stack" style="gap: var(--gap); align-items: center;">
       <div>
-        <div class="title">Where is he pointing?</div>
+        <div class="title">Which direction is Chris facing?</div>
         <div class="meta" style="margin-top: 12px;" id="guess-greeting">Tap or drag the compass</div>
       </div>
       <div class="compass-pick">
@@ -337,7 +359,7 @@
   <div class="screen hidden" id="screen-results">
     <div class="stack" style="gap: var(--gap-lg);">
       <div>
-        <div class="label center">Chris was pointing</div>
+        <div class="label center">Chris was facing</div>
         <div class="display" id="actual-heading" style="margin-top: 8px;">—</div>
         <div class="meta" id="actual-dir"></div>
       </div>
