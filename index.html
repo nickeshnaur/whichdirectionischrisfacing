@@ -1,0 +1,756 @@
+<!--
+  WHERE'S CHRIS POINTING — party compass game (brutal edition)
+
+  STORAGE LAYER (search "STORAGE" to find): currently uses window.storage
+  (artifact-only). To deploy on a real host, replace the four functions in
+  the STORAGE block with Firebase Realtime Database, Supabase, or any
+  key-value store. Game state lives under one shared key: "game".
+
+  GAME STATE SHAPE:
+  {
+    chris: { id, claimedAt, lastBeat } | null,
+    actualHeading: number | null,
+    revealed: boolean,
+    submissions: { [id]: { id, name, heading, submittedAt } },
+    round: number
+  }
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&display=swap">
+
+<style>
+  /* =========================================================
+     DESIGN TOKENS
+     ========================================================= */
+  :root {
+    --bg: #fde047;            /* yellow page */
+    --ink: #000;              /* primary text + borders */
+    --paper: #fff;            /* surfaces */
+    --accent: #ef4444;        /* red — needle, "you" highlight */
+    --shadow-btn: 5px 5px 0 var(--ink);
+    --shadow-btn-active: 2px 2px 0 var(--ink);
+    --shadow-card: 8px 8px 0 var(--ink);
+    --border: 3px solid var(--ink);
+    --gap: 16px;              /* default vertical rhythm */
+    --gap-lg: 24px;           /* between major sections */
+  }
+
+  /* =========================================================
+     RESET
+     ========================================================= */
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; width: 100%; overflow-x: hidden; }
+  button { font: inherit; border: none; background: none; cursor: pointer; color: inherit; }
+  input { font: inherit; border: none; outline: none; background: none; color: inherit; }
+
+  /* =========================================================
+     PAGE SHELL
+     ========================================================= */
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Bricolage Grotesque", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background-image:
+      linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .app {
+    min-height: 100vh; min-height: 100dvh;
+    padding: 32px 20px 40px;
+    display: flex; flex-direction: column;
+  }
+  .screen {
+    flex: 1; display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    gap: var(--gap-lg);
+    width: 100%; max-width: 420px; margin: 0 auto;
+  }
+  .hidden { display: none !important; }
+  .stack { display: flex; flex-direction: column; gap: var(--gap); width: 100%; }
+
+  /* =========================================================
+     TYPOGRAPHY — one scale, one set of weights
+     - title:    36px / 800 — screen headlines, ALL CAPS
+     - display:  72px / 800 — giant numeric readouts
+     - body:     17px / 700 — buttons, inputs
+     - label:    13px / 700 — small-cap section labels
+     - meta:     14px / 600 — secondary text
+     ========================================================= */
+  .title {
+    font-size: 36px; font-weight: 800;
+    letter-spacing: -0.03em; line-height: 0.95;
+    text-transform: uppercase; text-align: center;
+  }
+  .display {
+    font-size: 72px; font-weight: 800;
+    letter-spacing: -0.05em; line-height: 1;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .meta {
+    font-size: 14px; font-weight: 600;
+    text-align: center; opacity: 0.75;
+  }
+  .label {
+    font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    opacity: 0.7;
+  }
+
+  /* =========================================================
+     BUTTONS
+     ========================================================= */
+  .btn {
+    width: 100%;
+    padding: 18px 20px;
+    border: var(--border);
+    border-radius: 0;
+    box-shadow: var(--shadow-btn);
+    font-size: 17px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.02em;
+    transition: transform 0.08s, box-shadow 0.08s;
+    min-height: 56px;
+  }
+  .btn:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow: var(--shadow-btn-active);
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--ink); color: var(--bg); }
+  .btn-secondary { background: var(--paper); color: var(--ink); }
+  .btn-link {
+    background: none; border: none; box-shadow: none;
+    padding: 8px; min-height: auto;
+    font-size: 13px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    text-decoration: underline; text-underline-offset: 4px;
+    width: auto; opacity: 0.7;
+  }
+  .btn-link:active { transform: none; box-shadow: none; }
+
+  /* =========================================================
+     CARDS / INPUTS
+     ========================================================= */
+  .card {
+    background: var(--paper);
+    border: var(--border);
+    box-shadow: var(--shadow-card);
+    padding: 24px;
+    width: 100%;
+  }
+  .input {
+    background: var(--paper);
+    border: var(--border);
+    color: var(--ink);
+    padding: 16px 20px;
+    font-size: 17px; font-weight: 600;
+    width: 100%;
+    box-shadow: var(--shadow-btn-active);
+  }
+  .input::placeholder { color: var(--ink); opacity: 0.4; }
+
+  /* =========================================================
+     COMPASS PICKER (SVG)
+     ========================================================= */
+  .compass-pick {
+    width: 100%; max-width: 320px; aspect-ratio: 1;
+    background: var(--paper);
+    border: var(--border);
+    box-shadow: var(--shadow-card);
+    border-radius: 50%;
+    user-select: none; -webkit-user-select: none;
+    align-self: center;
+  }
+  .compass-pick svg { width: 100%; height: 100%; touch-action: none; display: block; }
+  .cp-tick { stroke: var(--ink); opacity: 0.5; stroke-width: 1.5; }
+  .cp-tick-major { stroke: var(--ink); opacity: 1; stroke-width: 3; }
+  .cp-cardinal { fill: var(--ink); font-weight: 800; font-size: 26px; font-family: inherit; }
+  .cp-cardinal-N { fill: var(--accent); }
+  .cp-needle-n { fill: var(--accent); stroke: var(--ink); stroke-width: 3; stroke-linejoin: miter; }
+  .cp-needle-s { fill: var(--paper); stroke: var(--ink); stroke-width: 3; stroke-linejoin: miter; }
+  .cp-hub { fill: var(--ink); }
+
+  /* =========================================================
+     CHRIS COMPASS DISPLAY (read-only)
+     ========================================================= */
+  .chris-arrow {
+    width: 80px; height: 80px;
+    border: var(--border);
+    border-radius: 50%;
+    position: relative;
+    background: var(--paper);
+    transition: transform 0.1s linear;
+  }
+  .chris-arrow::after {
+    content: '';
+    position: absolute; top: 6px; left: 50%;
+    width: 0; height: 0; transform: translateX(-50%);
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-bottom: 22px solid var(--accent);
+  }
+
+  /* =========================================================
+     RESULTS
+     ========================================================= */
+  .results-list { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .results-row {
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--paper);
+    border: var(--border);
+    box-shadow: 4px 4px 0 var(--ink);
+    padding: 14px 18px;
+  }
+  .results-row.me { background: var(--accent); color: var(--paper); }
+  .rank {
+    font-size: 22px; font-weight: 800; min-width: 36px;
+    font-variant-numeric: tabular-nums;
+  }
+  .player-name { font-weight: 700; font-size: 15px; text-transform: uppercase; letter-spacing: 0.02em; }
+  .player-stats {
+    font-size: 13px; font-weight: 600; opacity: 0.8;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* =========================================================
+     UTILITIES
+     ========================================================= */
+  .center { text-align: center; }
+  .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+  .spinner {
+    width: 48px; height: 48px;
+    border: var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    background: var(--paper);
+    box-sizing: border-box;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-msg {
+    font-size: 13px; font-weight: 600;
+    text-align: center; padding: 12px;
+    background: var(--accent); color: var(--paper);
+    border: var(--border);
+  }
+</style>
+
+<div class="app">
+  <!-- ========== SCREEN: HOME ========== -->
+  <div class="screen" id="screen-home">
+    <div class="stack" style="gap: var(--gap-lg);">
+      <div>
+        <div class="title">Where's Chris pointing?</div>
+        <div class="meta" style="margin-top: 12px;">Guess the compass direction. Closest wins.</div>
+      </div>
+      <div class="stack">
+        <button class="btn btn-primary" id="btn-iam-chris">I am Chris</button>
+        <button class="btn btn-secondary" id="btn-not-chris">I am not Chris</button>
+      </div>
+      <div class="meta" id="chris-status" style="min-height: 20px;"></div>
+      <button class="btn-link hidden" id="btn-steal" style="align-self: center;">Chris left? Take over →</button>
+    </div>
+  </div>
+
+  <!-- ========== SCREEN: CHRIS COMPASS ========== -->
+  <div class="screen hidden" id="screen-chris">
+    <div class="stack" style="gap: var(--gap-lg); align-items: center;">
+      <div>
+        <div class="title">You're Chris</div>
+        <div class="meta" style="margin-top: 12px;">Hold your phone flat. Point it where you want.</div>
+      </div>
+      <div class="card stack" style="align-items: center; gap: var(--gap);">
+        <div class="label">Your heading</div>
+        <div class="display" id="chris-heading">—</div>
+        <div class="meta" id="chris-dir">Waiting for compass…</div>
+        <div class="chris-arrow" id="chris-arrow" style="display: none;"></div>
+        <button class="btn btn-secondary hidden" id="btn-enable-compass" style="margin-top: 8px;">Enable compass</button>
+        <div class="error-msg hidden" id="compass-error"></div>
+      </div>
+      <div class="stack">
+        <button class="btn btn-primary" id="btn-everyone-in" disabled>Everyone is in</button>
+        <button class="btn-link" id="btn-unclaim" style="align-self: center;">← I'm not Chris anymore</button>
+      </div>
+      <div class="meta" id="submission-count" style="min-height: 20px;"></div>
+    </div>
+  </div>
+
+  <!-- ========== SCREEN: GUESSER NAME ========== -->
+  <div class="screen hidden" id="screen-name">
+    <div class="stack" style="gap: var(--gap-lg);">
+      <div class="title">What's your name?</div>
+      <input class="input" id="input-name" placeholder="Your name" autocomplete="off" maxlength="20" />
+      <button class="btn btn-primary" id="btn-name-next">Next</button>
+      <button class="btn-link" id="btn-name-back" style="align-self: center;">← Back</button>
+    </div>
+  </div>
+
+  <!-- ========== SCREEN: GUESSER PICK ========== -->
+  <div class="screen hidden" id="screen-guess">
+    <div class="stack" style="gap: var(--gap); align-items: center;">
+      <div>
+        <div class="title">Where is he pointing?</div>
+        <div class="meta" style="margin-top: 12px;" id="guess-greeting">Tap or drag the compass</div>
+      </div>
+      <div class="compass-pick">
+        <svg id="compass-svg" viewBox="0 0 300 300">
+          <g id="cp-ticks"></g>
+          <text x="150" y="40" text-anchor="middle" class="cp-cardinal cp-cardinal-N">N</text>
+          <text x="262" y="160" text-anchor="middle" class="cp-cardinal">E</text>
+          <text x="150" y="280" text-anchor="middle" class="cp-cardinal">S</text>
+          <text x="38" y="160" text-anchor="middle" class="cp-cardinal">W</text>
+          <g id="cp-needle" transform="rotate(0 150 150)">
+            <polygon points="150,32 138,150 162,150" class="cp-needle-n" />
+            <polygon points="150,268 138,150 162,150" class="cp-needle-s" />
+            <circle cx="150" cy="150" r="11" class="cp-hub" />
+          </g>
+        </svg>
+      </div>
+      <div class="card stack" style="align-items: center; gap: 6px; padding: 18px;">
+        <div class="display" id="cp-degree" style="font-size: 56px;">—</div>
+        <div class="label" id="cp-direction">Tap to pick</div>
+      </div>
+      <button class="btn btn-primary" id="btn-submit-guess" disabled>Submit</button>
+      <button class="btn-link" id="btn-guess-back" style="align-self: center;">← Back</button>
+    </div>
+  </div>
+
+  <!-- ========== SCREEN: WAITING ========== -->
+  <div class="screen hidden" id="screen-waiting">
+    <div class="stack" style="gap: var(--gap-lg); align-items: center;">
+      <div class="spinner"></div>
+      <div>
+        <div class="title">Waiting on Chris</div>
+        <div class="meta pulse" style="margin-top: 12px;">Your guess is locked in</div>
+      </div>
+      <div class="card stack" style="gap: 6px; align-items: center;">
+        <div class="label">Your guess</div>
+        <div class="display" id="my-guess-display" style="font-size: 56px;">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== SCREEN: RESULTS ========== -->
+  <div class="screen hidden" id="screen-results">
+    <div class="stack" style="gap: var(--gap-lg);">
+      <div>
+        <div class="label center">Chris was pointing</div>
+        <div class="display" id="actual-heading" style="margin-top: 8px;">—</div>
+        <div class="meta" id="actual-dir"></div>
+      </div>
+      <div class="results-list" id="results-list"></div>
+      <button class="btn btn-secondary" id="btn-play-again">Play again</button>
+    </div>
+  </div>
+</div>
+
+<script>
+//==============================================================
+// STORAGE LAYER — swap this block for Firebase/Supabase later
+//==============================================================
+const STATE_KEY = 'game';
+const HEARTBEAT_MS = 5000;
+const STALE_MS = 20000;
+const POLL_MS = 1500;
+
+async function loadState() {
+  try {
+    const r = await window.storage.get(STATE_KEY, true);
+    return r ? JSON.parse(r.value) : null;
+  } catch { return null; }
+}
+async function saveState(s) {
+  try { await window.storage.set(STATE_KEY, JSON.stringify(s), true); }
+  catch (e) { console.error('save failed', e); }
+}
+function emptyState() {
+  return { chris: null, actualHeading: null, revealed: false, submissions: {}, round: 0 };
+}
+//==============================================================
+
+// --- IDENTITY ---
+let myId = localStorage.getItem('myId');
+if (!myId) {
+  myId = 'p_' + Math.random().toString(36).slice(2, 10);
+  localStorage.setItem('myId', myId);
+}
+let myName = localStorage.getItem('myName') || '';
+
+// --- LOCAL UI STATE ---
+let currentScreen = 'home';
+let myHeading = null;
+let lastSeenRound = -1;
+let heartbeatTimer = null;
+let pollTimer = null;
+let pickedHeading = null;
+let isDragging = false;
+
+// --- DOM HELPERS ---
+const $ = (id) => document.getElementById(id);
+const screens = ['home','chris','name','guess','waiting','results'];
+function show(name) {
+  currentScreen = name;
+  screens.forEach(s => $('screen-' + s).classList.toggle('hidden', s !== name));
+}
+
+// --- DIRECTION HELPERS ---
+function headingToDir(h) {
+  if (h == null) return '';
+  h = ((h % 360) + 360) % 360;
+  if (h >= 337.5 || h < 22.5) return 'N';
+  if (h < 67.5) return 'NE';
+  if (h < 112.5) return 'E';
+  if (h < 157.5) return 'SE';
+  if (h < 202.5) return 'S';
+  if (h < 247.5) return 'SW';
+  if (h < 292.5) return 'W';
+  return 'NW';
+}
+function dirFullName(d) {
+  return { N:'North', NE:'Northeast', E:'East', SE:'Southeast',
+           S:'South', SW:'Southwest', W:'West', NW:'Northwest' }[d] || '';
+}
+function angularDiff(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+// --- COMPASS API (Chris's screen) ---
+async function startCompass() {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') {
+        showCompassError('Permission denied. Tap "Enable compass" to try again.');
+        return false;
+      }
+    } catch (e) {
+      showCompassError('Could not request compass permission.');
+      return false;
+    }
+  }
+  let gotEvent = false;
+  const handler = (e) => {
+    let h = null;
+    if (typeof e.webkitCompassHeading === 'number') {
+      h = e.webkitCompassHeading;
+    } else if (typeof e.alpha === 'number') {
+      h = 360 - e.alpha;
+    }
+    if (h != null) {
+      gotEvent = true;
+      myHeading = h;
+      updateChrisCompassUI();
+    }
+  };
+  window.addEventListener('deviceorientationabsolute', handler, true);
+  window.addEventListener('deviceorientation', handler, true);
+  setTimeout(() => {
+    if (!gotEvent) {
+      showCompassError('No compass data. Check Motion & Orientation Access in Safari settings.');
+    }
+  }, 2500);
+  return true;
+}
+function showCompassError(msg) {
+  $('compass-error').textContent = msg;
+  $('compass-error').classList.remove('hidden');
+  $('btn-enable-compass').classList.remove('hidden');
+}
+function updateChrisCompassUI() {
+  if (myHeading == null) return;
+  const h = Math.round(((myHeading % 360) + 360) % 360);
+  $('chris-heading').textContent = h + '°';
+  $('chris-dir').textContent = dirFullName(headingToDir(h));
+  const arrow = $('chris-arrow');
+  arrow.style.display = 'block';
+  arrow.style.transform = `rotate(${h}deg)`;
+  $('btn-everyone-in').disabled = false;
+  $('compass-error').classList.add('hidden');
+  $('btn-enable-compass').classList.add('hidden');
+}
+
+// --- HEARTBEAT ---
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(async () => {
+    const s = await loadState() || emptyState();
+    if (s.chris && s.chris.id === myId) {
+      s.chris.lastBeat = Date.now();
+      if (myHeading != null) s.actualHeading = myHeading;
+      await saveState(s);
+    }
+  }, HEARTBEAT_MS);
+}
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+// --- POLLING ---
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(syncFromServer, POLL_MS);
+  syncFromServer();
+}
+async function syncFromServer() {
+  const s = await loadState() || emptyState();
+
+  // Stale-Chris detection
+  if (s.chris && Date.now() - (s.chris.lastBeat || 0) > STALE_MS && s.chris.id !== myId) {
+    if (currentScreen === 'home') $('btn-steal').classList.remove('hidden');
+  } else {
+    $('btn-steal').classList.add('hidden');
+  }
+
+  if (currentScreen === 'home') {
+    if (s.chris && s.chris.id !== myId) {
+      $('chris-status').textContent = 'Someone is being Chris…';
+      $('btn-iam-chris').disabled = true;
+    } else {
+      $('chris-status').textContent = '';
+      $('btn-iam-chris').disabled = false;
+    }
+  }
+
+  if (currentScreen === 'chris') {
+    const n = Object.keys(s.submissions || {}).length;
+    $('submission-count').textContent =
+      n === 0 ? 'No guesses yet' :
+      n === 1 ? '1 guess in' : `${n} guesses in`;
+  }
+
+  if (s.revealed && s.round > lastSeenRound &&
+      (currentScreen === 'waiting' || currentScreen === 'guess' || currentScreen === 'name')) {
+    lastSeenRound = s.round;
+    showResults(s);
+  }
+
+  if (currentScreen === 'results' && !s.revealed && s.round > lastSeenRound) {
+    lastSeenRound = s.round;
+    show('home');
+  }
+}
+
+// --- RESULTS ---
+function showResults(s) {
+  const actual = s.actualHeading;
+  const subs = Object.values(s.submissions || {});
+  const ranked = subs.map(sub => ({
+    ...sub,
+    diff: angularDiff(actual, sub.heading)
+  })).sort((a, b) => a.diff - b.diff);
+
+  $('actual-heading').textContent = Math.round(actual) + '°';
+  $('actual-dir').textContent = dirFullName(headingToDir(actual));
+
+  const list = $('results-list');
+  list.innerHTML = '';
+  ranked.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'results-row' + (r.id === myId ? ' me' : '');
+    const left = document.createElement('div');
+    left.style.display = 'flex';
+    left.style.alignItems = 'center';
+    left.style.gap = '14px';
+    const rank = document.createElement('div');
+    rank.className = 'rank';
+    rank.textContent = `#${i+1}`;
+    const name = document.createElement('div');
+    name.className = 'player-name';
+    name.textContent = r.name + (r.id === myId ? ' (you)' : '');
+    left.appendChild(rank);
+    left.appendChild(name);
+    const right = document.createElement('div');
+    right.className = 'player-stats';
+    right.textContent = `${Math.round(r.heading)}° · ${Math.round(r.diff)}° off`;
+    row.appendChild(left);
+    row.appendChild(right);
+    list.appendChild(row);
+  });
+
+  if (subs.length === 0) {
+    list.innerHTML = '<div class="error-msg">No one guessed</div>';
+  }
+  show('results');
+}
+
+//==============================================================
+// COMPASS PICKER (guesser screen)
+//==============================================================
+(function buildTicks() {
+  const ticks = $('cp-ticks');
+  const cx = 150, cy = 150;
+  let svg = '';
+  for (let deg = 0; deg < 360; deg += 10) {
+    const major = deg % 30 === 0;
+    const inner = major ? 122 : 128;
+    const outer = 138;
+    const rad = (deg - 90) * Math.PI / 180;
+    const x1 = cx + Math.cos(rad) * inner;
+    const y1 = cy + Math.sin(rad) * inner;
+    const x2 = cx + Math.cos(rad) * outer;
+    const y2 = cy + Math.sin(rad) * outer;
+    svg += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="cp-tick${major ? ' cp-tick-major' : ''}" />`;
+  }
+  ticks.innerHTML = svg;
+})();
+
+function resetCompassPick() {
+  pickedHeading = null;
+  $('cp-degree').textContent = '—';
+  $('cp-direction').textContent = 'Tap to pick';
+  $('cp-needle').setAttribute('transform', 'rotate(0 150 150)');
+  $('btn-submit-guess').disabled = true;
+}
+
+function pointToHeading(clientX, clientY) {
+  const svg = $('compass-svg');
+  const rect = svg.getBoundingClientRect();
+  const x = ((clientX - rect.left) / rect.width) * 300 - 150;
+  const y = ((clientY - rect.top) / rect.height) * 300 - 150;
+  let deg = Math.atan2(x, -y) * 180 / Math.PI;
+  if (deg < 0) deg += 360;
+  return Math.round(deg);
+}
+
+function setHeading(h) {
+  pickedHeading = ((h % 360) + 360) % 360;
+  $('cp-degree').textContent = pickedHeading + '°';
+  $('cp-direction').textContent = dirFullName(headingToDir(pickedHeading));
+  $('cp-needle').setAttribute('transform', `rotate(${pickedHeading} 150 150)`);
+  $('btn-submit-guess').disabled = false;
+}
+
+function handlePointer(e) {
+  e.preventDefault();
+  const point = e.touches ? e.touches[0] : e;
+  if (!point) return;
+  setHeading(pointToHeading(point.clientX, point.clientY));
+}
+
+const compassSvg = $('compass-svg');
+compassSvg.addEventListener('mousedown', (e) => { isDragging = true; handlePointer(e); });
+compassSvg.addEventListener('mousemove', (e) => { if (isDragging) handlePointer(e); });
+window.addEventListener('mouseup', () => { isDragging = false; });
+compassSvg.addEventListener('touchstart', (e) => { isDragging = true; handlePointer(e); }, { passive: false });
+compassSvg.addEventListener('touchmove', (e) => { if (isDragging) handlePointer(e); }, { passive: false });
+compassSvg.addEventListener('touchend', () => { isDragging = false; });
+
+//==============================================================
+// EVENT WIRING
+//==============================================================
+
+// --- HOME ---
+$('btn-iam-chris').addEventListener('click', async () => {
+  const s = await loadState() || emptyState();
+  if (s.chris && s.chris.id !== myId &&
+      Date.now() - (s.chris.lastBeat || 0) < STALE_MS) {
+    $('chris-status').textContent = 'Someone else just claimed it.';
+    return;
+  }
+  const ns = emptyState();
+  ns.chris = { id: myId, claimedAt: Date.now(), lastBeat: Date.now() };
+  ns.round = (s.round || 0) + 1;
+  lastSeenRound = ns.round;
+  await saveState(ns);
+  show('chris');
+  $('btn-everyone-in').disabled = true;
+  myHeading = null;
+  $('chris-heading').textContent = '—';
+  $('chris-dir').textContent = 'Waiting for compass…';
+  $('chris-arrow').style.display = 'none';
+  $('compass-error').classList.add('hidden');
+  $('btn-enable-compass').classList.add('hidden');
+  startHeartbeat();
+  await startCompass();
+});
+
+$('btn-not-chris').addEventListener('click', () => {
+  $('input-name').value = myName;
+  show('name');
+});
+
+$('btn-steal').addEventListener('click', async () => {
+  const s = await loadState() || emptyState();
+  const ns = emptyState();
+  ns.chris = { id: myId, claimedAt: Date.now(), lastBeat: Date.now() };
+  ns.round = (s.round || 0) + 1;
+  lastSeenRound = ns.round;
+  await saveState(ns);
+  show('chris');
+  $('btn-everyone-in').disabled = true;
+  myHeading = null;
+  $('chris-heading').textContent = '—';
+  startHeartbeat();
+  await startCompass();
+});
+
+// --- CHRIS ---
+$('btn-enable-compass').addEventListener('click', () => startCompass());
+
+$('btn-everyone-in').addEventListener('click', async () => {
+  if (myHeading == null) return;
+  const s = await loadState() || emptyState();
+  if (!s.chris || s.chris.id !== myId) return;
+  s.actualHeading = myHeading;
+  s.revealed = true;
+  await saveState(s);
+  stopHeartbeat();
+  showResults(s);
+});
+
+$('btn-unclaim').addEventListener('click', async () => {
+  const s = await loadState() || emptyState();
+  if (s.chris && s.chris.id === myId) {
+    s.chris = null;
+    await saveState(s);
+  }
+  stopHeartbeat();
+  show('home');
+});
+
+// --- NAME ---
+$('btn-name-next').addEventListener('click', () => {
+  const v = $('input-name').value.trim();
+  if (!v) return;
+  myName = v;
+  localStorage.setItem('myName', v);
+  $('guess-greeting').textContent = `Hey ${v}, tap or drag the compass`;
+  resetCompassPick();
+  show('guess');
+});
+$('input-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('btn-name-next').click();
+});
+$('btn-name-back').addEventListener('click', () => show('home'));
+
+// --- GUESS ---
+$('btn-submit-guess').addEventListener('click', async () => {
+  if (pickedHeading == null) return;
+  const s = await loadState() || emptyState();
+  s.submissions = s.submissions || {};
+  s.submissions[myId] = { id: myId, name: myName, heading: pickedHeading, submittedAt: Date.now() };
+  await saveState(s);
+  $('my-guess-display').textContent = pickedHeading + '°';
+  show('waiting');
+});
+$('btn-guess-back').addEventListener('click', () => show('name'));
+
+// --- RESULTS ---
+$('btn-play-again').addEventListener('click', async () => {
+  const s = await loadState() || emptyState();
+  lastSeenRound = s.round;
+  show('home');
+});
+
+// --- BOOT ---
+startPolling();
+
+window.addEventListener('beforeunload', () => {
+  stopHeartbeat();
+});
+</script>
