@@ -292,7 +292,8 @@
         <div class="error-msg hidden" id="compass-error"></div>
       </div>
       <div class="stack">
-        <button class="btn btn-primary" id="btn-everyone-in" disabled>Everyone is in</button>
+        <button class="btn btn-primary" id="btn-lock-compass" disabled>Lock compass in</button>
+        <button class="btn btn-primary hidden" id="btn-everyone-in">Everyone is in</button>
         <button class="btn-link" id="btn-unclaim" style="align-self: center;">← I'm not Chris anymore</button>
       </div>
       <div class="meta" id="submission-count" style="min-height: 20px;"></div>
@@ -425,6 +426,7 @@ let myHeading = null;
 let lastSeenRound = -1;
 let heartbeatTimer = null;
 let pickedHeading = null;
+let lockedHeading = null;
 let isDragging = false;
 
 // --- DOM HELPERS ---
@@ -510,24 +512,25 @@ function showCompassError(msg) {
 }
 function updateChrisCompassUI() {
   if (myHeading == null) return;
-  // Don't reveal the heading — Chris shouldn't see his own answer until reveal.
-  $('chris-heading').textContent = '🧭';
-  $('chris-dir').textContent = 'Locked in. Tap below when everyone has guessed.';
-  $('btn-everyone-in').disabled = false;
+  // Pre-lock: just show the compass is reading. Don't reveal heading.
+  if (lockedHeading == null) {
+    $('chris-heading').textContent = '🧭';
+    $('chris-dir').textContent = 'Compass active. Point your phone, then lock it in.';
+    $('btn-lock-compass').disabled = false;
+  }
   $('compass-error').classList.add('hidden');
   $('btn-enable-compass').classList.add('hidden');
 }
 
 // --- HEARTBEAT ---
-// Per-path writes so we never clobber concurrent submissions.
+// Just liveness — actualHeading is only written on reveal so the live
+// reading can't leak through Firebase before Chris clicks "Everyone is in".
 function startHeartbeat() {
   stopHeartbeat();
   heartbeatTimer = setInterval(async () => {
     if (!latestState || !latestState.chris || latestState.chris.id !== myId) return;
     try {
-      const updates = { 'chris/lastBeat': Date.now() };
-      if (myHeading != null) updates['actualHeading'] = myHeading;
-      await stateRef.update(updates);
+      await stateRef.child('chris/lastBeat').set(Date.now());
     } catch (e) { console.error('heartbeat failed', e); }
   }, HEARTBEAT_MS);
 }
@@ -707,12 +710,7 @@ $('btn-iam-chris').addEventListener('click', async () => {
   lastSeenRound = ns.round;
   await saveState(ns);
   show('chris');
-  $('btn-everyone-in').disabled = true;
-  myHeading = null;
-  $('chris-heading').textContent = '…';
-  $('chris-dir').textContent = 'Waiting for compass…';
-  $('compass-error').classList.add('hidden');
-  $('btn-enable-compass').classList.add('hidden');
+  resetChrisScreen();
   startHeartbeat();
   await startCompass();
 });
@@ -730,23 +728,41 @@ $('btn-steal').addEventListener('click', async () => {
   lastSeenRound = ns.round;
   await saveState(ns);
   show('chris');
-  $('btn-everyone-in').disabled = true;
-  myHeading = null;
-  $('chris-heading').textContent = '…';
-  $('chris-dir').textContent = 'Waiting for compass…';
+  resetChrisScreen();
   startHeartbeat();
   await startCompass();
 });
 
+function resetChrisScreen() {
+  myHeading = null;
+  lockedHeading = null;
+  $('chris-heading').textContent = '…';
+  $('chris-dir').textContent = 'Waiting for compass…';
+  $('btn-lock-compass').disabled = true;
+  $('btn-lock-compass').classList.remove('hidden');
+  $('btn-everyone-in').classList.add('hidden');
+  $('compass-error').classList.add('hidden');
+  $('btn-enable-compass').classList.add('hidden');
+}
+
 // --- CHRIS ---
 $('btn-enable-compass').addEventListener('click', () => startCompass());
 
-$('btn-everyone-in').addEventListener('click', async () => {
+$('btn-lock-compass').addEventListener('click', () => {
   if (myHeading == null) return;
+  lockedHeading = myHeading;
+  $('chris-heading').textContent = '🧭🔒';
+  $('chris-dir').textContent = 'Locked in. Tap below when everyone has guessed.';
+  $('btn-lock-compass').classList.add('hidden');
+  $('btn-everyone-in').classList.remove('hidden');
+});
+
+$('btn-everyone-in').addEventListener('click', async () => {
+  if (lockedHeading == null) return;
   if (!latestState || !latestState.chris || latestState.chris.id !== myId) return;
-  await stateRef.update({ actualHeading: myHeading, revealed: true });
+  await stateRef.update({ actualHeading: lockedHeading, revealed: true });
   stopHeartbeat();
-  showResults({ ...latestState, actualHeading: myHeading, revealed: true });
+  showResults({ ...latestState, actualHeading: lockedHeading, revealed: true });
 });
 
 $('btn-unclaim').addEventListener('click', async () => {
