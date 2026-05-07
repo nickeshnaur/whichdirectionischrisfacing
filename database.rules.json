@@ -1,0 +1,29 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "game": {
+      ".read": true,
+      ".write": true,
+      "chris": {
+        "id":         { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length < 50" },
+        "claimedAt":  { ".validate": "newData.isNumber()" },
+        "lastBeat":   { ".validate": "newData.isNumber()" },
+        "$other":     { ".validate": false }
+      },
+      "actualHeading": { ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 360)" },
+      "revealed":      { ".validate": "newData.isBoolean()" },
+      "round":         { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000" },
+      "submissions": {
+        "$pid": {
+          "id":          { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length < 50" },
+          "name":        { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length < 100" },
+          "heading":     { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 360" },
+          "submittedAt": { ".validate": "newData.isNumber()" },
+          "$other":      { ".validate": false }
+        }
+      },
+      "$other": { ".validate": false }
+    }
+  }
+}
